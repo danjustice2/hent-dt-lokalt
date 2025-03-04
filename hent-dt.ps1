@@ -26,7 +26,8 @@ function Test-Elevated {
 # Request elevation if not running with elevated privileges
 if (-Not (Test-Elevated)) {
     Log-Message "Script is not running with elevated privileges. Requesting elevation."
-    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -localAppDataPath `"$localAppDataPath`"" -Verb RunAs
+    $credential = Get-Credential -Message "Please enter your credentials"
+    Start-Process powershell.exe -Credential $credential -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -localAppDataPath `"$localAppDataPath`"" -Verb RunAs
     Exit
 }
 
