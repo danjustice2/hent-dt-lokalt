@@ -1,4 +1,7 @@
-﻿try {
+﻿param(
+    [switch]$Revert
+)
+
 
     #--- Log Setup ---
     function Write-Log {
@@ -50,6 +53,61 @@
 
 
     #--- Functions ---
+
+    function Test-ChangesExist {
+        param (
+            [string]$registryPath,
+            [string]$registryExpectedValue,
+            [string]$destinationPath
+        )
+
+        # Check registry value
+        $currentRegistryValue = (Get-ItemProperty -Path $registryPath -Name 'SystemPath' -ErrorAction SilentlyContinue).SystemPath
+        if ($currentRegistryValue -ne $registryExpectedValue) {
+            return $true
+        }
+
+        # Check if destination folder exists
+        if (Test-Path -Path $destinationPath) {
+            return $true
+        }
+
+        return $false
+    }
+
+    function Restore-OriginalState {
+    param (
+        [string]$registryPath,
+        [string]$originalRegistryValue,
+        [string]$destinationPath,
+        [string]$configFilePath
+    )
+
+    Write-Log "Restoring original registry value..." "INFO"
+    Set-ItemProperty -Path $registryPath -Name 'SystemPath' -Value $originalRegistryValue -Force
+    Write-Log "Registry restored to '$originalRegistryValue'." "INFO"
+
+    if (Test-Path -Path $destinationPath) {
+        Write-Log "Removing directory '$destinationPath'..." "INFO"
+        Remove-Item -Path $destinationPath -Recurse -Force
+        Write-Log "Directory '$destinationPath' removed." "INFO"
+    } else {
+        Write-Log "Directory '$destinationPath' does not exist. Skipping removal." "INFO"
+    }
+
+    # Restore oldest XML backup
+    $backupDir = Split-Path -Path $configFilePath
+    $backupFile = Get-ChildItem -Path $backupDir -Filter "Setup.xml.*.bak" | Sort-Object CreationTime | Select-Object -First 1
+
+    if ($backupFile) {
+        Write-Log "Restoring XML configuration from backup: '$($backupFile.FullName)'..." "INFO"
+        Copy-Item -Path $backupFile.FullName -Destination $configFilePath -Force
+        Write-Log "XML configuration restored successfully." "INFO"
+    } else {
+        Write-Log "No XML backup found. Skipping XML restoration." "WARN"
+    }
+}
+
     function Test-IsElevated {
         $currentUser = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
         return $currentUser.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
@@ -170,42 +228,39 @@
         Write-Log "Registry value '$name' set to '$value'." "INFO"
     }
 
-    #--- Main Script Execution ---
-    try {
-        Ensure-Elevation  # Restart script as admin if not already elevated.
+#--- Main Script Execution ---
+try {
+    Ensure-Elevation  # Restart script as admin if not already elevated.
+    Write-Log "Starting script execution as user: $LogonUser"
 
-        Write-Log "Starting script execution as user: $LogonUser"
+    # Define original registry value for restoration
+    $originalRegistryValue = "Q:\DynamicTemplate"
 
-        Map-NetworkDrive -driveLetter 'Q' -networkPath '\\srafil01v\prog'
-
-        # Ensure required directories
-        Ensure-Directory $destinationPath
-
-        # Copy necessary files
-        Copy-Files -source $sourcePath -destination $destinationPath -exclude $excludedFolder
-
-        # Backup and update XML configuration
-        Backup-XML -xmlPath $configFilePath -backupPath $backupFilePath
-        Update-XML -xmlPath $configFilePath
-
-        # Copy updated XML to destination
-        Copy-Item -Path $configFilePath -Destination "$destinationPath\Setup.xml" -Force
-        Write-Log "Copied updated Setup.xml to '$destinationPath'." "INFO"
-
-        # Update Registry
-        Update-Registry -path $registryPath -name 'SystemPath' -value $registryValue
-
-        Write-Log "Script execution completed successfully." "INFO"
+    # Check if revert parameter is provided or if changes already exist
+    if ($Revert -or (Test-ChangesExist -registryPath $registryPath -registryExpectedValue $registryValue -destinationPath $destinationPath)) {
+        Write-Log "Detected revert parameter or existing changes. Restoring original state..." "INFO"
+        Restore-OriginalState -registryPath $registryPath `
+                              -originalRegistryValue $originalRegistryValue `
+                              -destinationPath $destinationPath `
+                              -configFilePath $configFilePath
+        Write-Log "Restoration completed successfully." "INFO"
+        exit 0
     }
-    catch {
-        Write-Log "An error occurred: $_" "ERROR"
-        exit 1
-    }
+
+    # Continue with original actions if no revert is needed
+    Map-NetworkDrive -driveLetter 'Q' -networkPath '\\srafil01v\prog'
+    Ensure-Directory $destinationPath
+    Copy-Files -source $sourcePath -destination $destinationPath -exclude $excludedFolder
+    Backup-XML -xmlPath $configFilePath -backupPath $backupFilePath
+    Update-XML -xmlPath $configFilePath
+    Copy-Item -Path $configFilePath -Destination "$destinationPath\Setup.xml" -Force
+    Write-Log "Copied updated Setup.xml to '$destinationPath'." "INFO"
+    Update-Registry -path $registryPath -name 'SystemPath' -value $registryValue
+    Write-Log "Script execution completed successfully." "INFO"
 }
 catch {
-    Write-Log "An unexpected error occurred: $_" "ERROR"
-    Read-Host "Press Enter to close the window and exit..."
-    Exit 1
+    Write-Log "An error occurred: $_" "ERROR"
+    exit 1
 }
 
 Read-Host "Script execution completed. Press Enter to close this window." 
