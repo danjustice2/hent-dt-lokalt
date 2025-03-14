@@ -53,25 +53,25 @@
 
 
     #--- Functions ---
-
     function Test-ChangesExist {
         param (
             [string]$registryPath,
-            [string]$registryExpectedValue,
+            [string]$originalRegistryValue,
             [string]$destinationPath
         )
 
         # Check registry value
         $currentRegistryValue = (Get-ItemProperty -Path $registryPath -Name 'SystemPath' -ErrorAction SilentlyContinue).SystemPath
-        if ($currentRegistryValue -ne $registryExpectedValue) {
+        if ($currentRegistryValue -ne $originalRegistryValue) {
             return $true
         }
 
-        # Check if destination folder exists
+        # Check if destination folder exists (it shouldn't exist in original state)
         if (Test-Path -Path $destinationPath) {
             return $true
         }
 
+        # If both checks pass, no changes exist
         return $false
     }
 
@@ -233,11 +233,14 @@ try {
     Ensure-Elevation  # Restart script as admin if not already elevated.
     Write-Log "Starting script execution as user: $LogonUser"
 
-    # Define original registry value for restoration
+    # Define original and new registry values explicitly
     $originalRegistryValue = "Q:\DynamicTemplate"
+    $newRegistryValue = Join-Path $CurrentUserProfilePath "dynamictemplate\lokaltest"
 
     # Check if revert parameter is provided or if changes already exist
-    if ($Revert -or (Test-ChangesExist -registryPath $registryPath -registryExpectedValue $registryValue -destinationPath $destinationPath)) {
+    if ($Revert -or (Test-ChangesExist -registryPath $registryPath `
+                                       -originalRegistryValue $originalRegistryValue `
+                                       -destinationPath $destinationPath)) {
         Write-Log "Detected revert parameter or existing changes. Restoring original state..." "INFO"
         Restore-OriginalState -registryPath $registryPath `
                               -originalRegistryValue $originalRegistryValue `
@@ -255,7 +258,7 @@ try {
     Update-XML -xmlPath $configFilePath
     Copy-Item -Path $configFilePath -Destination "$destinationPath\Setup.xml" -Force
     Write-Log "Copied updated Setup.xml to '$destinationPath'." "INFO"
-    Update-Registry -path $registryPath -name 'SystemPath' -value $registryValue
+    Update-Registry -path $registryPath -name 'SystemPath' -value $newRegistryValue
     Write-Log "Script execution completed successfully." "INFO"
 }
 catch {
